@@ -37,10 +37,12 @@ public class MainActivity extends AppCompatActivity {
     private DataOutputStream outputStream;
     private SendDataThread sendDataThread;
     private SensorManager sensorManager;
-    private Sensor sensorGyro, sensorAcc, sensorMag;
+    private Sensor sensorGyro, sensorAcc, sensorMag, sensorLight;
     private float[] wib = new float[3]; // Gyroscope
     private float[] acc = new float[3]; // Accelerometer
     private float[] mag = new float[3]; // Magnetometer
+    private float lightValue = 0; // 光线传感器数据初始化
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -72,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
         sensorGyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         sensorAcc = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         sensorMag = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+        sensorLight = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT); // 初始化光线传感器
         sendDataThread = new SendDataThread();
         socket = new Socket();
     }
@@ -95,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
                     case Sensor.TYPE_MAGNETIC_FIELD:
                         System.arraycopy(event.values, 0, mag, 0, event.values.length);
                         break;
+                    case Sensor.TYPE_LIGHT: // 处理光线传感器数据
+                        lightValue = event.values[0]; // 光线强度
+                        break;
                 }
                 sendDataToServer();
             }
@@ -106,11 +112,13 @@ public class MainActivity extends AppCompatActivity {
         sensorManager.registerListener(sensorListener, sensorGyro, SensorManager.SENSOR_DELAY_NORMAL);
         sensorManager.registerListener(sensorListener, sensorAcc, SensorManager.SENSOR_DELAY_NORMAL);
         sensorManager.registerListener(sensorListener, sensorMag, SensorManager.SENSOR_DELAY_NORMAL);
+        sensorManager.registerListener(sensorListener, sensorLight, SensorManager.SENSOR_DELAY_NORMAL); // 注册光线传感器
     }
+
 
     private void sendDataToServer() {
         // 分配足够的ByteBuffer空间来存储标识符和传感器数据
-        ByteBuffer buffer = ByteBuffer.allocate(1 + 4 * wib.length + 1 + 4 * acc.length + 1 + 4 * mag.length);
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 4 * wib.length + 1 + 4 * acc.length + 1 + 4 * mag.length + 1 + 4);
 
         // 添加陀螺仪数据及其标识符
         buffer.put((byte) 1);  // 陀螺仪标识符为1
@@ -123,6 +131,10 @@ public class MainActivity extends AppCompatActivity {
         // 添加磁力计数据及其标识符
         buffer.put((byte) 3);  // 磁力计标识符为3
         for (float value : mag) buffer.putFloat(value);
+
+        // 添加光线传感器数据及其标识符
+        buffer.put((byte) 4);  // 光线传感器标识符为4
+        buffer.putFloat(lightValue);  // 假设lightValue已经在onSensorChanged中定义
 
         // 检查Socket连接并发送数据
         if (socket.isConnected() && sendDataThread.isAlive()) {
