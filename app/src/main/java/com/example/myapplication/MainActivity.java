@@ -7,15 +7,12 @@ import androidx.core.content.ContextCompat;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Message;
 import android.Manifest;
 import android.util.Log;
 import android.view.View;
@@ -40,9 +37,10 @@ public class MainActivity extends AppCompatActivity {
     private DataOutputStream outputStream;
     private SendDataThread sendDataThread;
     private SensorManager sensorManager;
-    private Sensor sensor_gyro;
-    private float[] wib = new float[3];
-    private int[] CNT = new int[1];
+    private Sensor sensorGyro, sensorAcc, sensorMag;
+    private float[] wib = new float[3]; // Gyroscope
+    private float[] acc = new float[3]; // Accelerometer
+    private float[] mag = new float[3]; // Magnetometer
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -52,7 +50,7 @@ public class MainActivity extends AppCompatActivity {
         initView();
         initVariables();
         requestPermissions();
-        registerSensorListener();
+        registerSensorListeners();
     }
 
     private void initView() {
@@ -71,7 +69,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void initVariables() {
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        sensor_gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        sensorGyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        sensorAcc = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        sensorMag = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         sendDataThread = new SendDataThread();
         socket = new Socket();
     }
@@ -82,27 +82,54 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void registerSensorListener() {
-        sensorManager.registerListener(new SensorEventListener() {
+    private void registerSensorListeners() {
+        SensorEventListener sensorListener = new SensorEventListener() {
             public void onSensorChanged(SensorEvent event) {
-                Log.d("SensorData", "Sensor type: " + event.sensor.getType() + ", values: " + Arrays.toString(event.values));
-                sendDataToServer(event.values);
+                switch (event.sensor.getType()) {
+                    case Sensor.TYPE_GYROSCOPE:
+                        System.arraycopy(event.values, 0, wib, 0, event.values.length);
+                        break;
+                    case Sensor.TYPE_ACCELEROMETER:
+                        System.arraycopy(event.values, 0, acc, 0, event.values.length);
+                        break;
+                    case Sensor.TYPE_MAGNETIC_FIELD:
+                        System.arraycopy(event.values, 0, mag, 0, event.values.length);
+                        break;
+                }
+                sendDataToServer();
             }
 
             public void onAccuracyChanged(Sensor sensor, int accuracy) {
             }
-        }, sensor_gyro, SensorManager.SENSOR_DELAY_NORMAL);
+        };
+
+        sensorManager.registerListener(sensorListener, sensorGyro, SensorManager.SENSOR_DELAY_NORMAL);
+        sensorManager.registerListener(sensorListener, sensorAcc, SensorManager.SENSOR_DELAY_NORMAL);
+        sensorManager.registerListener(sensorListener, sensorMag, SensorManager.SENSOR_DELAY_NORMAL);
     }
 
-    private void sendDataToServer(float[] values) {
+    private void sendDataToServer() {
+        // 分配足够的ByteBuffer空间来存储标识符和传感器数据
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 4 * wib.length + 1 + 4 * acc.length + 1 + 4 * mag.length);
+
+        // 添加陀螺仪数据及其标识符
+        buffer.put((byte) 1);  // 陀螺仪标识符为1
+        for (float value : wib) buffer.putFloat(value);
+
+        // 添加加速度计数据及其标识符
+        buffer.put((byte) 2);  // 加速度计标识符为2
+        for (float value : acc) buffer.putFloat(value);
+
+        // 添加磁力计数据及其标识符
+        buffer.put((byte) 3);  // 磁力计标识符为3
+        for (float value : mag) buffer.putFloat(value);
+
+        // 检查Socket连接并发送数据
         if (socket.isConnected() && sendDataThread.isAlive()) {
-            ByteBuffer buffer = ByteBuffer.allocate(4 * values.length);
-            for (float value : values) {
-                buffer.putFloat(value);
-            }
             sendDataThread.insertData(buffer.array());
         }
     }
+
 
     @SuppressLint("SetTextI18n")
     private void connectHost() {
@@ -126,12 +153,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void disconnectHost() {
         try {
-            if (sendDataThread != null) {
-                sendDataThread.stopThread();
-            }
-            if (socket != null) {
-                socket.close();
-            }
+            if (sendDataThread != null) sendDataThread.stopThread();
+            if (socket != null) socket.close();
             runOnUiThread(() -> {
                 bt_connect.setText("CONNECT");
                 tv_log.setText("Disconnected");
